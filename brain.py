@@ -2,7 +2,9 @@
 Implementation of the shared brain.
 """
 
+import numpy as np
 import tensorflow as tf
+import threading
 from keras.models import Model
 from keras.layers import Dense, Input
 from keras import backend as keras_backend
@@ -22,12 +24,14 @@ class Brain:
         self.CRITIC_LOSS_WEIGHT = 0.5
         self.ENTROPY_PENALTY_WEIGHT = 0.01
         self.LEARNING_RATE = 5e-3
+        self.BATCH_SIZE = 32
 
         self.session = tf.Session()
         self.model = self._build_model()
         self.graph, self.state_placeholder, self.selected_action_placeholder, \
             self.return_placeholder, self.minimization_step = self._build_tf_graph()
         self.training_queue = deque()
+        self.training_queue_lock = threading.Lock()
 
     def _build_model(self):
         """
@@ -94,8 +98,26 @@ class Brain:
     def run_optimization_step(self):
         """
         Run a single optimization step on the model.
+
+        Returns
+        -------
+        boolean
+            Whether we did actually run an optimization step (True), or if we didn't because not enough data
+            was available in the training queue (False).
         """
-        raise NotImplementedError
+        if len(self.training_queue) < self.BATCH_SIZE:
+            return False
+        with self.training_queue_lock:
+            states, actions, returns = zip(*self.training_queue)
+            self.training_queue.clear()
+        states = np.vstack(states)
+        actions = np.vstack(actions)
+        returns = np.vstack(returns)
+
+        self.session.run(self.minimization_step, feed_dict={self.state_placeholder: states,
+                                                            self.selected_action_placeholder: actions,
+                                                            self.return_placeholder: returns})
+        return True
 
     def save_step(self, state, action, return_):
         """
@@ -119,7 +141,7 @@ class Brain:
         Parameters
         ----------
         state
-            The environment state for which to select an action.
+            The environment state for which to compute the action probabilities.
 
         Returns
         -------
@@ -129,6 +151,31 @@ class Brain:
         with self.graph.as_default():
             action_probabilities, _ = self.model.predict(state)
             return action_probabilities
+
+    def select_action(self, state, epsilon=0.0):
+        """
+        Randomly select an action, perhaps epsilon-greedily.
+
+        Parameters
+        ----------
+        state
+            The environment state for which to select an action.
+        epsilon : float
+            With probability epsilon, a random action will be chosen instead.
+
+        Returns
+        -------
+        action : np.array
+            The selected action, one-hot encoded.
+        """
+        action = np.zeros((ACTION_SPACE_SIZE,))
+        if np.random.uniform() < epsilon:
+            index = np.random.choice(range(ACTION_SPACE_SIZE))
+        else:
+            probabilities = self.action_probabilities(state)
+            index = np.random.choice(range(ACTION_SPACE_SIZE), p=probabilities)
+        action[index] = 1
+        return action
 
     def compute_value(self, state):
         """
@@ -145,3 +192,6 @@ class Brain:
             with self.graph.as_default():
                 _, value = self.model.predict(state)
                 return value
+
+    def __del__(self):
+        self.session.close()

@@ -4,7 +4,9 @@ Implementation of an asynchronous agent in the CartPole environment.
 
 import gym
 import threading
+import numpy as np
 from collections import deque
+import time
 
 
 class Agent(threading.Thread):
@@ -25,15 +27,19 @@ class Agent(threading.Thread):
     """
     def __init__(self, brain, discount_factor=0.99, timesteps_until_update=5, max_td_steps=5):
         super().__init__()
+        self.THREAD_DELAY = 0.001
+        self.started = False
+        self.render = False
+
         self.brain = brain
         self.discount_factor = discount_factor
         self.timesteps_until_update = timesteps_until_update
         self.max_td_steps = max_td_steps
         self.environment = gym.make("CartPole-v0")
-        self.started = False
         self.memory = deque()
+        self.epsilon = 1.0
 
-    def start(self):
+    def run(self):
         """
         Start the agent. It will start running episodes until explicitly stopped.
         """
@@ -54,10 +60,15 @@ class Agent(threading.Thread):
         state = self.environment.reset()
         timesteps = 0
         while True:
-            action = self.brain.select_action(state)
+            time.sleep(self.THREAD_DELAY)
+
+            if self.render:
+                self.environment.render()
+            action = self.brain.select_action(state, epsilon=self.epsilon)
             next_state, reward, terminal, _ = self.environment.step(action)
             self.memory.append({'state': state, 'action': action, 'reward': reward})
             timesteps += 1
+            self.epsilon = 0.05 + (self.epsilon - 0.05) * np.exp(-0.001)
 
             if terminal or timesteps % self.timesteps_until_update == 0:
                 self.push_training_samples(use_entire_memory=terminal)
