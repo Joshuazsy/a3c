@@ -79,7 +79,6 @@ class Agent(threading.Thread):
             for k in range(td_steps):
                 return_ += self.discount_factor**k * self.memory[k]['reward']
                 return_ += self.discount_factor**td_steps * self.brain.compute_value(self.memory[td_steps]['state'])
-                return_ -= self.brain.compute_value(self.memory[0]['state'])
             self.brain.save_step(self.memory[0]['state'], self.memory[0]['action'], return_)
             self.memory.popleft()
             if not use_entire_memory and len(self.memory) < self.max_td_steps:
