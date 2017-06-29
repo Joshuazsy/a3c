@@ -5,21 +5,16 @@ Optimizers for the A3C algorithm.
 import threading
 import time
 
+from brain import brain
+
 
 class Optimizer(threading.Thread):
     """
     An independent unit in charge of optimizing the actor-critic model.
-
-    Parameters
-    ----------
-    brain : Brain
-        The brain to use and update.
     """
-    def __init__(self, brain):
+    def __init__(self):
         super().__init__()
         self.started = False
-
-        self.brain = brain
 
     def run(self):
         """
@@ -27,7 +22,7 @@ class Optimizer(threading.Thread):
         """
         self.started = True
         while self.started:
-            if not self.brain.run_optimization_step():
+            if not brain.run_optimization_step():
                 # If list is empty, don't keep trying until timeout, just yield already
                 time.sleep(0)
 

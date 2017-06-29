@@ -7,6 +7,11 @@ import threading
 import numpy as np
 from collections import deque
 import time
+import matplotlib.pyplot as plt
+
+from brain import brain
+
+timesteps = 0
 
 
 class Agent(threading.Thread):
@@ -15,35 +20,38 @@ class Agent(threading.Thread):
 
     Parameters
     ----------
-    brain : Brain
-        The brain to use and update.
     discount_factor : float, optional
         By how much should the agent discount its rewards over time? Also known as gamma. Default is 0.99.
     timesteps_until_update : integer, optional
-        How many timesteps should we wait until updating? Default is 5.
+        How many timesteps should we wait until updating? Default is 8.
     max_td_steps : integer, optional
         What is the maximum number of steps used in the temporal difference estimate of the advantage for every state?
-        If larger than timesteps_until_update, will be capped to that value. Default is 5.
+        If larger than timesteps_until_update, will be capped to that value. Default is 8.
     """
-    def __init__(self, brain, discount_factor=0.99, timesteps_until_update=5, max_td_steps=5):
+    def __init__(self, render=False, discount_factor=0.99, timesteps_until_update=8, max_td_steps=8):
         super().__init__()
         self.THREAD_DELAY = 0.001
         self.started = False
-        self.render = False
+        self.render = render
+        self.figure = None
+        self.plot = None
+        self.total_number_of_episodes = 0
+        self.episode_rewards = []
 
-        self.brain = brain
         self.discount_factor = discount_factor
         self.timesteps_until_update = timesteps_until_update
         self.max_td_steps = max_td_steps
         self.environment = gym.make("CartPole-v0")
         self.memory = deque()
-        self.epsilon = 1.0
 
     def run(self):
         """
         Start the agent. It will start running episodes until explicitly stopped.
         """
         self.started = True
+        if self.render:
+            self.figure = plt.figure()
+            self.plot = self.figure.add_subplot(1, 1, 1)
         while self.started:
             self.run_episode()
 
@@ -57,43 +65,94 @@ class Agent(threading.Thread):
         """
         Run the agent for a single episode, saving the samples in the shared brain.
         """
+        global timesteps
+        total_rewards = 0.0
         state = self.environment.reset()
-        timesteps = 0
+
         while True:
             time.sleep(self.THREAD_DELAY)
-
             if self.render:
                 self.environment.render()
-            action = self.brain.select_action(state, epsilon=self.epsilon)
-            next_state, reward, terminal, _ = self.environment.step(action)
-            self.memory.append({'state': state, 'action': action, 'reward': reward})
+
+            action_index, action = brain.select_action(state, epsilon=self.epsilon)
+            next_state, reward, terminal, _ = self.environment.step(action_index)
+            if terminal:
+                next_state = None
+            self.push_training_sample(state, action, reward, next_state)
+
+            state = next_state
             timesteps += 1
-            self.epsilon = 0.05 + (self.epsilon - 0.05) * np.exp(-0.001)
+            total_rewards += reward
 
-            if terminal or timesteps % self.timesteps_until_update == 0:
-                self.push_training_samples(use_entire_memory=terminal)
+            if terminal:
+                self.total_number_of_episodes += 1
+                if self.render:
+                    # print("End of episode {}, total reward: {}"
+                    #       .format(self.total_number_of_episodes, total_rewards))
+                    self.episode_rewards.append(total_rewards)
+                    self.plot_episode()
+                break
 
-    def push_training_samples(self, use_entire_memory=False):
+    def push_training_sample(self, state, action, reward, next_state):
         """
-        Compute and push training samples into the brain training queue.
+        Compute and push a training sample into the brain training queue.
+        """
+        self.memory.append((state, action, reward, next_state))
+        if next_state is None:
+            # We have reached the end of the episode, flush the memory
+            while self.memory:
+                state, action, _, _ = self.memory[0]
+                total_discounted_reward, n_discount, n_state = self.compute_return(self.memory)
+                brain.save_step(state, action, total_discounted_reward, n_discount, n_state)
+                self.memory.popleft()
+        else:
+            if len(self.memory) >= self.max_td_steps:
+                # We can compute at least one full n-step return
+                state, action, _, _ = self.memory[0]
+                total_discounted_reward, n_discount, n_state = \
+                    self.compute_return([self.memory[i] for i in range(self.max_td_steps)])
+                brain.save_step(state, action, total_discounted_reward, n_discount, n_state)
+                self.memory.popleft()
+
+    def compute_return(self, trajectory):
+        """
+        Compute return components over a trajectory.
 
         Parameters
         ----------
-        use_entire_memory : boolean, optional
-            Should the entire memory be used? If False, use only the states for which n-step returns can be computed,
-            where n=self.max_td_steps. If True, states for which less than n-step returns can be computed will also be
-            included, with the largest number of steps possible. Default is False.
+        trajectory : list or deque of (np.array((4,0)), np.array((2,0)), float, np.array((4,0))
+            The trajectory over which to compute the return components.
+
+        Returns
+        -------
+        total_discounted_reward
+            The total discounted reward for the trajectory.
+        n_discount : float
+            The discount factor for the n-step state value.
+        n_state : np.array of size (4, 0)
+            The state at the end of the trajectory.
         """
-        while self.memory:
-            return_ = 0.0
-            td_steps = max(self.max_td_steps, len(self.memory))
-            for k in range(td_steps):
-                return_ += self.discount_factor**k * self.memory[k]['reward']
-                return_ += self.discount_factor**td_steps * self.brain.compute_value(self.memory[td_steps]['state'])
-            self.brain.save_step(self.memory[0]['state'], self.memory[0]['action'], return_)
-            self.memory.popleft()
-            if not use_entire_memory and len(self.memory) < self.max_td_steps:
-                break
+        total_discounted_reward = 0.0
+        for k in range(len(trajectory)):
+            total_discounted_reward += self.discount_factor**k * trajectory[k][2]
+        n_discount = self.discount_factor**len(trajectory)
+        n_state = trajectory[-1][3]
+        return total_discounted_reward, n_discount, n_state
 
+    @property
+    def epsilon(self):
+        """
+        Compute the internal epsilon according to the schedule.
+        """
+        if timesteps >= 75000:
+            return 0.15
+        else:
+            return 0.4 + timesteps * (0.4 - 0.15) / 75000
 
-
+    def plot_episode(self):
+        self.plot.clear()
+        self.plot.set_title('Total rewards of each episode')
+        self.plot.set_xlabel('Episode')
+        self.plot.set_ylabel('Total reward')
+        self.plot.plot(range(len(self.episode_rewards)), self.episode_rewards, '-')
+        plt.pause(0.001)
