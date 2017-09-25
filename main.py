@@ -19,7 +19,17 @@ for agent in agents:
 for optimizer in optimizers:
     optimizer.start()
 
-time.sleep(RUN_TIME_IN_MINUTES*60)
+try:
+    time.sleep(RUN_TIME_IN_MINUTES*60)
+except KeyboardInterrupt:
+    for agent in agents:
+        agent.stop()
+    for agent in agents:
+        agent.join()  # Let the agents finish their episode
+    for optimizer in optimizers:
+        optimizer.stop()
+    for optimizer in optimizers:
+        optimizer.join()
 
 for agent in agents:
     agent.stop()

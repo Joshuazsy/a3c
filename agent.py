@@ -43,7 +43,6 @@ class Agent(threading.Thread):
         self.max_td_steps = max_td_steps
         self.environment = gym.make("CartPole-v0")
         self.memory = deque()
-        self.internal_epsilon = 1.0
 
     def run(self):
         """
@@ -75,7 +74,7 @@ class Agent(threading.Thread):
             if self.render:
                 self.environment.render()
 
-            action_index, action = brain.select_action(state, epsilon=self.epsilon)
+            action_index, action = brain.select_action(state)
             next_state, reward, terminal, _ = self.environment.step(action_index)
             if terminal:
                 next_state = None
@@ -139,17 +138,6 @@ class Agent(threading.Thread):
         n_discount = self.discount_factor**len(trajectory)
         n_state = trajectory[-1][3]
         return total_discounted_reward, n_discount, n_state
-
-    @property
-    def epsilon(self):
-        """
-        Compute the internal epsilon according to the schedule.
-        """
-        return 0.05 + 0.95 * np.exp(-1e-5 * timesteps)
-    #     if timesteps >= 75000:
-    #         return 0.15
-    #     else:
-    #         return 0.4 + timesteps * (0.4 - 0.15) / 75000
 
     def plot_episode(self):
         self.plot.clear()

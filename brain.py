@@ -159,16 +159,14 @@ class Brain:
             policy = self.session.run(self.policy, feed_dict={self.state_ph: state})
             return policy
 
-    def select_action(self, state, epsilon=0.0):
+    def select_action(self, state):
         """
-        Randomly select an action, perhaps epsilon-greedily.
+        Randomly select an action.
 
         Parameters
         ----------
         state : np.array of shape (STATE_SPACE_SIZE,)
             The environment state for which to select an action.
-        epsilon : float
-            With probability epsilon, a random action will be chosen instead.
 
         Returns
         -------
@@ -178,11 +176,8 @@ class Brain:
             The selected action, one-hot encoded.
         """
         action = np.zeros((ACTION_SPACE_SIZE,))
-        if np.random.uniform() < epsilon:
-            index = np.random.choice(range(ACTION_SPACE_SIZE))
-        else:
-            probabilities = self.compute_policy(state.reshape(1, -1)).ravel()
-            index = np.random.choice(range(ACTION_SPACE_SIZE), p=probabilities)
+        probabilities = self.compute_policy(state.reshape(1, -1)).ravel()
+        index = np.random.choice(range(ACTION_SPACE_SIZE), p=probabilities)
         action[index] = 1
         return index, action
 
